@@ -120,6 +120,7 @@ const extractRoot = path.join(serviceRoot, ".state", "extracted", "current");
 const serviceManifest = JSON.parse(await readFile(path.join(repoRoot, "service.json"), "utf8"));
 const metadataPath = path.join(extractRoot, "SERVICE-LASSO-PACKAGE.json");
 const tcpPort = await reserveLoopbackPort();
+const dataRoot = path.join(serviceRoot, "runtime", "data");
 
 if (serviceManifest.id !== "postgres" || serviceManifest.version !== postgresVersion) {
   throw new Error(`Unexpected service manifest identity: ${JSON.stringify({ id: serviceManifest.id, version: serviceManifest.version })}`);
@@ -160,7 +161,7 @@ const postgres = spawn(process.execPath, ["./lasso-postgres.mjs"], {
     POSTGRES_USER: "pgadmin",
     POSTGRES_PASSWORD: "pgadmin",
     POSTGRES_DATABASES: "keycloak",
-    POSTGRES_DATA_DIR: path.join(serviceRoot, "runtime", "data"),
+    POSTGRES_DATA_DIR: dataRoot,
   },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
@@ -187,5 +188,14 @@ try {
   console.error(stderr);
   throw error;
 } finally {
+  const pgctl = path.join(extractRoot, "bin", platform === "win32" ? "pg_ctl.exe" : "pg_ctl");
+  spawnSync(pgctl, ["-D", dataRoot, "-m", "fast", "-w", "stop"], {
+    env: {
+      ...process.env,
+      PATH: `${path.dirname(pgctl)}${path.delimiter}${process.env.PATH ?? ""}`,
+    },
+    stdio: "ignore",
+    shell: false,
+  });
   await stopChild(postgres);
 }

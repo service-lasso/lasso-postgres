@@ -171,7 +171,7 @@ export async function packagePostgres(platform = targetPlatform, version = postg
   return outputPath;
 }
 
-const launcherSource = String.raw`import { spawn, spawnSync } from "node:child_process";
+const launcherSource = String.raw`import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -197,8 +197,8 @@ const env = {
   PATH: binRoot + path.delimiter + (process.env.PATH ?? ""),
   PGPASSWORD: password,
 };
-let tempServerStarted = false;
-let postgres = null;
+let serverStarted = false;
+let stopping = false;
 
 function exe(name) {
   return path.join(binRoot, isWindows ? name + ".exe" : name);
@@ -216,8 +216,13 @@ function run(command, args, options = {}) {
   }
 }
 
-function stopTempServer() {
-  if (!tempServerStarted) {
+function startServer() {
+  run(exe("pg_ctl"), ["-D", dataRoot, "-o", "-h " + host + " -p " + port, "-w", "start"]);
+  serverStarted = true;
+}
+
+function stopServer() {
+  if (!serverStarted) {
     return;
   }
 
@@ -225,16 +230,16 @@ function stopTempServer() {
     stdio: "inherit",
     env,
   });
-  tempServerStarted = false;
+  serverStarted = false;
 }
 
 function stop() {
-  if (postgres && !postgres.killed) {
-    postgres.kill("SIGTERM");
+  if (stopping) {
     return;
   }
 
-  stopTempServer();
+  stopping = true;
+  stopServer();
   process.exit(0);
 }
 
@@ -255,30 +260,32 @@ function initializeIfNeeded() {
     return;
   }
 
-  run(exe("pg_ctl"), ["-D", dataRoot, "-o", "-h " + host + " -p " + port, "-w", "start"]);
-  tempServerStarted = true;
+  startServer();
   try {
     for (const database of databases) {
       run(exe("createdb"), ["-h", host, "-p", port, "-U", user, database]);
     }
   } finally {
-    stopTempServer();
+    stopServer();
   }
 }
 
 initializeIfNeeded();
 
-postgres = spawn(exe("postgres"), ["-D", dataRoot, "-h", host, "-p", port], {
-  stdio: "inherit",
-  env,
-});
-postgres.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
+startServer();
+setInterval(() => {
+  if (stopping) {
     return;
   }
-  process.exit(code ?? 0);
-});
+
+  const status = spawnSync(exe("pg_ctl"), ["-D", dataRoot, "status"], {
+    stdio: "ignore",
+    env,
+  });
+  if (status.status !== 0) {
+    process.exit(status.status ?? 1);
+  }
+}, 2_000);
 `;
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
