@@ -247,7 +247,6 @@ function initializeIfNeeded() {
   }
 
   mkdirSync(runtimeRoot, { recursive: true });
-  mkdirSync(dataRoot, { recursive: true });
   writeFileSync(passwordFile, password + "\n", "utf8");
 
   run(exe("initdb"), ["--encoding", "UTF8", "-D", dataRoot, "-U", user, "--pwfile", passwordFile]);
