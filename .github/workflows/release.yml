@@ -24,6 +24,10 @@ jobs:
             platform: darwin
             postgres-version: "15.17"
             artifact: dist/lasso-postgres-15.17-darwin.tar.gz
+          - os: ubuntu-22.04
+            platform: linux
+            postgres-version: "15.17"
+            artifact: dist/lasso-postgres-15.17-linux.tar.gz
 
     runs-on: ${{ matrix.os }}
 
@@ -35,6 +39,14 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential libreadline-dev zlib1g-dev
 
       - name: Verify package
         run: npm test
@@ -86,6 +98,7 @@ jobs:
           sha256sum \
             lasso-postgres-15.17-win32.zip \
             lasso-postgres-15.17-darwin.tar.gz \
+            lasso-postgres-15.17-linux.tar.gz \
             service.json \
             > SHA256SUMS.txt
 
@@ -106,6 +119,7 @@ jobs:
           files: |
             release-assets/lasso-postgres-15.17-win32.zip
             release-assets/lasso-postgres-15.17-darwin.tar.gz
+            release-assets/lasso-postgres-15.17-linux.tar.gz
             release-assets/service.json
             release-assets/SHA256SUMS.txt
           generate_release_notes: true
