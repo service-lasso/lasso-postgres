@@ -54,6 +54,12 @@
         "archiveType": "tar.gz",
         "command": "node",
         "args": ["./lasso-postgres.mjs"]
+      },
+      "linux": {
+        "assetName": "lasso-postgres-15.17-linux.tar.gz",
+        "archiveType": "tar.gz",
+        "command": "node",
+        "args": ["./lasso-postgres.mjs"]
       }
     }
   },

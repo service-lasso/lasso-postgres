@@ -23,6 +23,14 @@ const targets = {
     binary: "bin/postgres",
     psql: "bin/psql",
   },
+  linux: {
+    upstreamAsset: `postgresql-${postgresVersion}.tar.gz`,
+    upstreamUrl: `https://ftp.postgresql.org/pub/source/v${postgresVersion}/postgresql-${postgresVersion}.tar.gz`,
+    archiveType: "tar.gz",
+    binary: "bin/postgres",
+    psql: "bin/psql",
+    build: "source",
+  },
 };
 
 function run(command, args, options = {}) {
@@ -95,6 +103,28 @@ function findDistributionRoot(root, target) {
   throw new Error(`Could not find PostgreSQL distribution root under ${root}.`);
 }
 
+function findSourceRoot(root, version) {
+  const candidates = [
+    path.join(root, `postgresql-${version}`),
+    root,
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(path.join(candidate, "configure")) && existsSync(path.join(candidate, "src"))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Could not find PostgreSQL source root under ${root}.`);
+}
+
+async function buildSourceDistribution(sourceRoot, packageRoot) {
+  const jobs = process.env.MAKE_JOBS ?? "2";
+  run("./configure", [`--prefix=${packageRoot}`], { cwd: sourceRoot });
+  run("make", [`-j${jobs}`], { cwd: sourceRoot });
+  run("make", ["install"], { cwd: sourceRoot });
+}
+
 async function copyDistribution(distributionRoot, packageRoot) {
   for (const folder of ["bin", "include", "lib", "share", "doc"]) {
     const source = path.join(distributionRoot, folder);
@@ -134,8 +164,14 @@ export async function packagePostgres(platform = targetPlatform, version = postg
   }
   run("tar", ["-xf", upstreamArchive, "-C", extractRoot]);
 
-  const distributionRoot = findDistributionRoot(extractRoot, target);
-  await copyDistribution(distributionRoot, packageRoot);
+  if (target.build === "source") {
+    const sourceRoot = findSourceRoot(extractRoot, version);
+    await buildSourceDistribution(sourceRoot, packageRoot);
+  } else {
+    const distributionRoot = findDistributionRoot(extractRoot, target);
+    await copyDistribution(distributionRoot, packageRoot);
+  }
+
   await writeFile(path.join(packageRoot, "lasso-postgres.mjs"), launcherSource, "utf8");
 
   if (platform !== "win32") {

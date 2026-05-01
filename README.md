@@ -22,10 +22,11 @@ Protected pushes to `main` create a timestamped `yyyy.m.d-<shortsha>` GitHub rel
 
 - `lasso-postgres-15.17-win32.zip`
 - `lasso-postgres-15.17-darwin.tar.gz`
+- `lasso-postgres-15.17-linux.tar.gz`
 - `service.json`
 - `SHA256SUMS.txt`
 
-Linux is intentionally not published in the first release because the current EDB binary archive page does not provide a supported PostgreSQL 15 Linux binary archive equivalent. Add Linux in a follow-up when an approved portable distribution source is selected.
+Windows and macOS artifacts are packaged from EnterpriseDB installer binary archives. Linux artifacts are built in CI from the official PostgreSQL source archive for the pinned version, then verified with the same start/connect/stop smoke test before release.
 
 ## Local Verification
 
