@@ -36,12 +36,6 @@ npm test
 
 This packages the current platform artifact, extracts it, runs the launcher, waits for TCP readiness, verifies `psql` can connect, and stops the managed process.
 
-## Donor Source
+## Environment Contract
 
-This service is migrated from:
-
-```text
-C:\projects\typerefinery-ai\typerefinery\services\postgredb
-```
-
-The Service Lasso manifest keeps the important donor behavior: auth defaults, data path, TCP health, `keycloak` bootstrap database, and both `POSTGRES_*` plus legacy-compatible `POSTGRE_*` global environment outputs.
+The Service Lasso manifest publishes auth defaults, the data path, TCP health, the `keycloak` bootstrap database, and both `POSTGRES_*` plus compatibility `POSTGRE_*` global environment outputs.
