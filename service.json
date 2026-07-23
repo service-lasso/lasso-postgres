@@ -75,11 +75,14 @@
       }
     ]
   },
-  "healthcheck": {
-    "type": "tcp",
-    "retries": 80,
-    "interval": 250
-  },
+  "healthchecks": [
+    {
+      "id": "tcp-ready",
+      "type": "tcp",
+      "retries": 80,
+      "interval": 250
+    }
+  ],
   "updates": {
     "enabled": true,
     "mode": "notify",

@@ -8,7 +8,7 @@ This repo packages PostgreSQL `15.17` into Service Lasso release artifacts and p
 
 - Service ID: `postgres`
 - Default port: `8500`
-- Health: TCP readiness on `${SERVICE_PORT}`
+- Health: canonical `healthchecks[]` TCP readiness on `${SERVICE_PORT}`
 - Data path: `${SERVICE_ROOT}/runtime/data`
 - Default bootstrap user: `pgadmin`
 - Default bootstrap password: `pgadmin`
@@ -38,4 +38,4 @@ This packages the current platform artifact, extracts it, runs the launcher, wai
 
 ## Environment Contract
 
-The Service Lasso manifest publishes auth defaults, the data path, TCP health, the `keycloak` bootstrap database, and both `POSTGRES_*` plus compatibility `POSTGRE_*` global environment outputs.
+The Service Lasso manifest publishes auth defaults, the data path, canonical `healthchecks[]` TCP readiness, the `keycloak` bootstrap database, and both `POSTGRES_*` plus compatibility `POSTGRE_*` global environment outputs.
