@@ -130,17 +130,72 @@ if (serviceManifest.healthcheck) {
   throw new Error("PostgreSQL service.json must use canonical healthchecks[] instead of singular healthcheck.");
 }
 
+if (serviceManifest.ports) {
+  throw new Error("PostgreSQL service.json must author network interfaces with canonical endpoints[] instead of legacy ports.");
+}
+
+if (serviceManifest.urls) {
+  throw new Error("PostgreSQL service.json must author links with canonical endpoints[] instead of legacy urls.");
+}
+
+const endpointsById = new Map((serviceManifest.endpoints ?? []).map((endpoint) => [endpoint.id, endpoint]));
+const serviceEndpoint = endpointsById.get("service");
+const postgresEndpoint = endpointsById.get("postgres");
+if (serviceEndpoint?.kind !== "network") {
+  throw new Error("PostgreSQL service.json is missing the canonical service network endpoint.");
+}
+if (serviceEndpoint.label !== "PostgreSQL TCP") {
+  throw new Error("PostgreSQL service endpoint label drifted.");
+}
+if (serviceEndpoint.direction !== "inbound") {
+  throw new Error("PostgreSQL service endpoint must be inbound.");
+}
+if (serviceEndpoint.transport !== "tcp" || serviceEndpoint.protocol !== "tcp") {
+  throw new Error("PostgreSQL service endpoint must use TCP transport/protocol.");
+}
+if (serviceEndpoint.bind !== "127.0.0.1") {
+  throw new Error("PostgreSQL service endpoint must bind to loopback.");
+}
+if (serviceEndpoint.port?.default !== 8500 || serviceEndpoint.port?.strategy !== "preferred") {
+  throw new Error("PostgreSQL service endpoint must preserve preferred default port 8500.");
+}
+if (serviceEndpoint.exposure !== "local" || serviceEndpoint.primary !== true) {
+  throw new Error("PostgreSQL service endpoint must remain the primary local endpoint.");
+}
+if (postgresEndpoint?.kind !== "url") {
+  throw new Error("PostgreSQL service.json is missing the canonical URL endpoint.");
+}
+if (postgresEndpoint.target !== "service") {
+  throw new Error("PostgreSQL URL endpoint must target the service network endpoint.");
+}
+if (postgresEndpoint.url !== "postgresql://${endpoint.service.bind}:${endpoint.service.port}/postgres") {
+  throw new Error("PostgreSQL URL endpoint must use endpoint selectors.");
+}
+if (postgresEndpoint.exposure !== "local" || postgresEndpoint.primary !== true) {
+  throw new Error("PostgreSQL URL endpoint must remain the primary local URL.");
+}
+
 const [tcpHealthcheck] = serviceManifest.healthchecks ?? [];
 if (
   serviceManifest.healthchecks?.length !== 1 ||
   tcpHealthcheck?.id !== "tcp-ready" ||
   tcpHealthcheck?.type !== "tcp" ||
-  serviceManifest.ports?.service !== 8500
+  tcpHealthcheck?.address !== "${endpoint.service.bind}:${endpoint.service.port}"
 ) {
-  throw new Error(`PostgreSQL service.json health/ports drifted: ${JSON.stringify(serviceManifest)}`);
+  throw new Error(`PostgreSQL service.json health/endpoints drifted: ${JSON.stringify(serviceManifest)}`);
 }
 
-for (const key of ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRE_HOST", "POSTGRE_PORT"]) {
+if (serviceManifest.env?.POSTGRES_HOST !== "${endpoint.service.bind}") {
+  throw new Error("POSTGRES_HOST must resolve from the service endpoint bind selector.");
+}
+if (serviceManifest.env?.POSTGRES_PORT !== "${endpoint.service.port}") {
+  throw new Error("POSTGRES_PORT must resolve from the service endpoint port selector.");
+}
+if (serviceManifest.env?.POSTGRES_URL !== "${endpoint.postgres.url}") {
+  throw new Error("POSTGRES_URL must resolve from the canonical URL endpoint.");
+}
+
+for (const key of ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_URL", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRE_HOST", "POSTGRE_PORT", "POSTGRE_URL"]) {
   if (!serviceManifest.globalenv?.[key] && !serviceManifest.env?.[key]) {
     throw new Error(`PostgreSQL service.json is missing env/globalenv ${key}.`);
   }

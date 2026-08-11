@@ -4,12 +4,36 @@
   "description": "Release-backed PostgreSQL service for local Service Lasso data dependencies.",
   "version": "15.17",
   "enabled": true,
-  "ports": {
-    "service": 8500
-  },
+  "endpoints": [
+    {
+      "id": "service",
+      "kind": "network",
+      "label": "PostgreSQL TCP",
+      "direction": "inbound",
+      "transport": "tcp",
+      "protocol": "tcp",
+      "bind": "127.0.0.1",
+      "port": {
+        "default": 8500,
+        "strategy": "preferred"
+      },
+      "exposure": "local",
+      "primary": true
+    },
+    {
+      "id": "postgres",
+      "kind": "url",
+      "label": "PostgreSQL",
+      "target": "service",
+      "url": "postgresql://${endpoint.service.bind}:${endpoint.service.port}/postgres",
+      "exposure": "local",
+      "primary": true
+    }
+  ],
   "env": {
-    "POSTGRES_HOST": "127.0.0.1",
-    "POSTGRES_PORT": "${SERVICE_PORT}",
+    "POSTGRES_HOST": "${endpoint.service.bind}",
+    "POSTGRES_PORT": "${endpoint.service.port}",
+    "POSTGRES_URL": "${endpoint.postgres.url}",
     "POSTGRES_USER": "pgadmin",
     "POSTGRES_PASSWORD": "pgadmin",
     "POSTGRES_DATABASES": "keycloak",
@@ -19,22 +43,17 @@
   "globalenv": {
     "POSTGRES_HOST": "${POSTGRES_HOST}",
     "POSTGRES_PORT": "${POSTGRES_PORT}",
+    "POSTGRES_URL": "${POSTGRES_URL}",
     "POSTGRES_USER": "${POSTGRES_USER}",
     "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
     "POSTGRES_HOME": "${SERVICE_ARTIFACT_ROOT}",
     "POSTGRE_HOST": "${POSTGRES_HOST}",
     "POSTGRE_PORT": "${POSTGRES_PORT}",
+    "POSTGRE_URL": "${POSTGRES_URL}",
     "POSTGRE_AUTH_USERNAME": "${POSTGRES_USER}",
     "POSTGRE_AUTH_PASSWORD": "${POSTGRES_PASSWORD}",
     "POSTGRE_HOME": "${SERVICE_ARTIFACT_ROOT}"
   },
-  "urls": [
-    {
-      "label": "tcp",
-      "url": "postgresql://${POSTGRES_USER}:***@${POSTGRES_HOST}:${POSTGRES_PORT}/postgres",
-      "kind": "local"
-    }
-  ],
   "artifact": {
     "kind": "archive",
     "source": {
@@ -79,6 +98,7 @@
     {
       "id": "tcp-ready",
       "type": "tcp",
+      "address": "${endpoint.service.bind}:${endpoint.service.port}",
       "retries": 80,
       "interval": 250
     }
