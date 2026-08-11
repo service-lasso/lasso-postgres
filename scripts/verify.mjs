@@ -126,7 +126,17 @@ if (serviceManifest.id !== "postgres" || serviceManifest.version !== postgresVer
   throw new Error(`Unexpected service manifest identity: ${JSON.stringify({ id: serviceManifest.id, version: serviceManifest.version })}`);
 }
 
-if (serviceManifest.healthcheck?.type !== "tcp" || serviceManifest.ports?.service !== 8500) {
+if (serviceManifest.healthcheck) {
+  throw new Error("PostgreSQL service.json must use canonical healthchecks[] instead of singular healthcheck.");
+}
+
+const [tcpHealthcheck] = serviceManifest.healthchecks ?? [];
+if (
+  serviceManifest.healthchecks?.length !== 1 ||
+  tcpHealthcheck?.id !== "tcp-ready" ||
+  tcpHealthcheck?.type !== "tcp" ||
+  serviceManifest.ports?.service !== 8500
+) {
   throw new Error(`PostgreSQL service.json health/ports drifted: ${JSON.stringify(serviceManifest)}`);
 }
 
