@@ -7,8 +7,9 @@ This repo packages PostgreSQL `15.17` into Service Lasso release artifacts and p
 ## Service Contract
 
 - Service ID: `postgres`
-- Default port: `8500`
-- Health: canonical `healthchecks[]` TCP readiness on `${SERVICE_PORT}`
+- Primary endpoint: `service` (`tcp`, loopback, preferred port `8500`)
+- URL endpoint: `postgresql://${endpoint.service.bind}:${endpoint.service.port}/postgres`
+- Health: canonical `healthchecks[]` TCP readiness on `${endpoint.service.bind}:${endpoint.service.port}`
 - Data path: `${SERVICE_ROOT}/runtime/data`
 - Default bootstrap user: `pgadmin`
 - Default bootstrap password: `pgadmin`
@@ -34,8 +35,21 @@ Windows and macOS artifacts are packaged from EnterpriseDB installer binary arch
 npm test
 ```
 
-This packages the current platform artifact, extracts it, runs the launcher, waits for TCP readiness, verifies `psql` can connect, and stops the managed process.
+This packages the current platform artifact, validates the canonical endpoint manifest, extracts it, runs the launcher, waits for TCP readiness, verifies `psql` can connect, and stops the managed process.
 
 ## Environment Contract
 
-The Service Lasso manifest publishes auth defaults, the data path, canonical `healthchecks[]` TCP readiness, the `keycloak` bootstrap database, and both `POSTGRES_*` plus compatibility `POSTGRE_*` global environment outputs.
+The Service Lasso manifest authors service interfaces through canonical `endpoints[]` entries. It keeps exported aliases outside endpoint entries for compatibility:
+
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_URL`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_HOME`
+- `POSTGRE_HOST`
+- `POSTGRE_PORT`
+- `POSTGRE_URL`
+- `POSTGRE_AUTH_USERNAME`
+- `POSTGRE_AUTH_PASSWORD`
+- `POSTGRE_HOME`
