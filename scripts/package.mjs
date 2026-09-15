@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -125,11 +125,59 @@ async function buildSourceDistribution(sourceRoot, packageRoot) {
   run("make", ["install"], { cwd: sourceRoot });
 }
 
-async function copyDistribution(distributionRoot, packageRoot) {
+async function copyDistribution(distributionRoot, packageRoot, platform) {
   for (const folder of ["bin", "include", "lib", "share", "doc"]) {
     const source = path.join(distributionRoot, folder);
     if (existsSync(source)) {
-      await cp(source, path.join(packageRoot, folder), { recursive: true });
+      // EnterpriseDB's macOS package uses builder-absolute dylib links. Materialize
+      // their targets so the release archive remains relocatable after extraction.
+      await cp(source, path.join(packageRoot, folder), {
+        recursive: true,
+        dereference: platform === "darwin",
+      });
+    }
+  }
+}
+
+function isWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+async function dylibFiles(root) {
+  const files = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await dylibFiles(entryPath));
+    } else if (entry.name.endsWith(".dylib")) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+export async function verifyDarwinLibraryLinks(packageRoot) {
+  const libraryRoot = path.join(packageRoot, "lib");
+  const canonicalLibraryRoot = await realpath(libraryRoot);
+
+  for (const libraryPath of await dylibFiles(libraryRoot)) {
+    if (!(await lstat(libraryPath)).isSymbolicLink()) continue;
+
+    const target = await readlink(libraryPath);
+    if (path.isAbsolute(target)) {
+      throw new Error(`Darwin package library link must be relative: ${libraryPath} -> ${target}`);
+    }
+
+    const resolvedTarget = path.resolve(path.dirname(libraryPath), target);
+    let canonicalTarget;
+    try {
+      canonicalTarget = await realpath(resolvedTarget);
+    } catch {
+      throw new Error(`Darwin package library link is dangling: ${libraryPath} -> ${target}`);
+    }
+    if (!isWithin(canonicalLibraryRoot, canonicalTarget)) {
+      throw new Error(`Darwin package library link escapes lib: ${libraryPath} -> ${target}`);
     }
   }
 }
@@ -169,7 +217,7 @@ export async function packagePostgres(platform = targetPlatform, version = postg
     await buildSourceDistribution(sourceRoot, packageRoot);
   } else {
     const distributionRoot = findDistributionRoot(extractRoot, target);
-    await copyDistribution(distributionRoot, packageRoot);
+    await copyDistribution(distributionRoot, packageRoot, platform);
   }
 
   await writeFile(path.join(packageRoot, "lasso-postgres.mjs"), launcherSource, "utf8");
@@ -201,6 +249,10 @@ export async function packagePostgres(platform = targetPlatform, version = postg
     )}\n`,
     "utf8",
   );
+
+  if (platform === "darwin") {
+    await verifyDarwinLibraryLinks(packageRoot);
+  }
 
   await compressPackage(packageRoot, outputPath, target.archiveType);
   console.log(`[lasso-postgres] packaged ${outputPath}`);
