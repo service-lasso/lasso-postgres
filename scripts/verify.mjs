@@ -1,9 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { packagePostgres } from "./package.mjs";
+import { packagePostgres, verifyDarwinLibraryLinks } from "./package.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const platform = process.env.TARGET_PLATFORM ?? process.platform;
@@ -23,6 +23,21 @@ function run(command, args, options = {}) {
 
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
+  }
+}
+
+async function expectRejectedDarwinLibraryLink(packageRoot, name, target, expectedDetail) {
+  const linkPath = path.join(packageRoot, "lib", name);
+  await symlink(target, linkPath);
+  try {
+    await verifyDarwinLibraryLinks(packageRoot);
+    throw new Error(`Darwin library link verification accepted ${name}.`);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes(expectedDetail)) {
+      throw error;
+    }
+  } finally {
+    await rm(linkPath, { force: true });
   }
 }
 
@@ -204,6 +219,20 @@ for (const key of ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_URL", "POSTGRES_U
 await rm(verifyRoot, { recursive: true, force: true });
 await mkdir(extractRoot, { recursive: true });
 run("tar", ["-xf", artifact, "-C", extractRoot]);
+
+if (platform === "darwin") {
+  await verifyDarwinLibraryLinks(extractRoot);
+
+  await expectRejectedDarwinLibraryLink(extractRoot, "dangling-test.dylib", "missing-target.dylib", "dangling");
+  const outsideLibrary = path.join(extractRoot, "outside-test.dylib");
+  await writeFile(outsideLibrary, "test");
+  try {
+    await expectRejectedDarwinLibraryLink(extractRoot, "absolute-test.dylib", outsideLibrary, "must be relative");
+    await expectRejectedDarwinLibraryLink(extractRoot, "escaping-test.dylib", "../outside-test.dylib", "escapes lib");
+  } finally {
+    await rm(outsideLibrary, { force: true });
+  }
+}
 
 const packageMetadata = JSON.parse(await readFile(metadataPath, "utf8"));
 if (
