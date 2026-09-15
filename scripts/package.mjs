@@ -129,8 +129,8 @@ async function copyDistribution(distributionRoot, packageRoot, platform) {
   for (const folder of ["bin", "include", "lib", "share", "doc"]) {
     const source = path.join(distributionRoot, folder);
     if (existsSync(source)) {
-      // EnterpriseDB's macOS package uses builder-absolute dylib links. Materialize
-      // their targets so the release archive remains relocatable after extraction.
+      // Materialize Darwin dylib-link targets so the release archive remains
+      // relocatable after extraction, regardless of how the source links resolve.
       await cp(source, path.join(packageRoot, folder), {
         recursive: true,
         dereference: platform === "darwin",

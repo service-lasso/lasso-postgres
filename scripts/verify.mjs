@@ -227,6 +227,7 @@ if (platform === "darwin") {
   const outsideLibrary = path.join(extractRoot, "outside-test.dylib");
   await writeFile(outsideLibrary, "test");
   try {
+    await expectRejectedDarwinLibraryLink(extractRoot, "absolute-test.dylib", outsideLibrary, "must be relative");
     await expectRejectedDarwinLibraryLink(extractRoot, "escaping-test.dylib", "../outside-test.dylib", "escapes lib");
   } finally {
     await rm(outsideLibrary, { force: true });
