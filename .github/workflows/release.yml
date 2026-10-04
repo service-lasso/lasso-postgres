@@ -56,10 +56,16 @@ jobs:
           sudo apt-get install -y build-essential libreadline-dev zlib1g-dev
 
       - name: Verify package
+        if: matrix.platform != 'win32'
         run: npm test
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
           POSTGRES_VERSION: ${{ matrix.postgres-version }}
+
+      - name: Verify Windows package as an ordinary user
+        if: matrix.platform == 'win32'
+        shell: powershell
+        run: ./scripts/verify-windows-ci.ps1
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4

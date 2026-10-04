@@ -26,5 +26,8 @@ test uses parent IPC for graceful shutdown; actual native Core lifecycle is a
 separate consumer gate. Set `POSTGRES_PACKAGE_ARCHIVE` to verify a held archive
 without rebuilding it. Development publication is an explicit `publish=true`
 dispatch on `develop`, after all three platform checks pass.
+PostgreSQL runs with an ordinary user token on Windows. The disposable hosted
+runner uses a dedicated non-administrator account for the same archive checks;
+the upstream server refuses administrative tokens.
 
 [Service contract, packaging, and maintainer commands](docs/maintainer-reference.md)
