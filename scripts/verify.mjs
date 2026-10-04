@@ -320,10 +320,12 @@ try {
     await Promise.race([failed, new Promise((_, reject) => { failureTimer = setTimeout(() => reject(new Error('Launcher did not propagate child failure.')), 10000); })]);
   } finally { clearTimeout(failureTimer); }
   if (child.exitCode === 0) throw new Error('Abnormal child exit was reported as successful.');
+  childEnv.POSTGRES_MAX_CONNECTIONS = '120';
   launch();
   await waitForPsql(psql, tcpPort);
   cycles.push(await verifyOwned());
   if (sql('select id from lifecycle_receipt') !== 'original-identity') throw new Error('Data was lost after child failure.');
+  if (sql('show max_connections') !== '120') throw new Error('Configured max_connections was not applied.');
   await wrapperStop();
   const legacyRoot = path.join(serviceRoot, 'legacy-data');
   await mkdir(legacyRoot);

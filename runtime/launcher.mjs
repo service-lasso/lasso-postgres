@@ -46,6 +46,11 @@ process.on('SIGTERM', () => void stop());
 process.on('message', message => { if (message === 'shutdown') void stop(); });
 
 try {
+  const serverArgs = ['-D', dataRoot, '-h', host, '-p', port];
+  if (process.env.POSTGRES_MAX_CONNECTIONS !== undefined) {
+    if (!/^\d+$/.test(process.env.POSTGRES_MAX_CONNECTIONS) || Number(process.env.POSTGRES_MAX_CONNECTIONS) < 1 || Number(process.env.POSTGRES_MAX_CONNECTIONS) > 1000) throw new Error('POSTGRES_MAX_CONNECTIONS must be an integer from 1 to 1000.');
+    serverArgs.push('-c', 'max_connections=' + process.env.POSTGRES_MAX_CONNECTIONS);
+  }
   if (!existsSync(path.join(dataRoot, 'PG_VERSION'))) {
     mkdirSync(runtimeRoot, { recursive: true });
     mkdirSync(path.dirname(dataRoot), { recursive: true });
@@ -73,7 +78,7 @@ try {
     }
   }
   if (!stopping) {
-    child = spawn(exe('postgres'), ['-D', dataRoot, '-h', host, '-p', port], { env, stdio: 'inherit', windowsHide: true, detached: false });
+    child = spawn(exe('postgres'), serverArgs, { env, stdio: 'inherit', windowsHide: true, detached: false });
     exited = new Promise(resolve => {
       child.once('error', error => { console.error(error.message); process.exitCode = 1; resolve(); });
       child.once('exit', (code, signal) => {

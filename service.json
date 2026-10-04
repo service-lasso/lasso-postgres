@@ -37,6 +37,7 @@
     "POSTGRES_USER": "pgadmin",
     "POSTGRES_PASSWORD": "pgadmin",
     "POSTGRES_DATABASES": "keycloak",
+    "POSTGRES_MAX_CONNECTIONS": "100",
     "POSTGRES_DATA_DIR": "${SERVICE_ROOT}/runtime/data",
     "PGPASSWORD": "${POSTGRES_PASSWORD}"
   },
