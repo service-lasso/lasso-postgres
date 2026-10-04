@@ -9,7 +9,8 @@ This repo packages PostgreSQL `15.17` into Service Lasso release artifacts and p
 - Service ID: `postgres`
 - Primary endpoint: `service` (`tcp`, loopback, preferred port `8500`)
 - URL endpoint: `postgresql://${endpoint.service.bind}:${endpoint.service.port}/postgres`
-- Health: canonical `healthchecks[]` TCP readiness on `${endpoint.service.bind}:${endpoint.service.port}`
+- Health: singular `healthcheck` TCP readiness on `${endpoint.service.bind}:${endpoint.service.port}` for current Core importer compatibility
+- Execution: managed `@node` provider runs the acquired `lasso-postgres.mjs` launcher
 - Data path: `${SERVICE_ROOT}/runtime/data`
 - Default bootstrap user: `pgadmin`
 - Default bootstrap password: `pgadmin`
@@ -19,13 +20,14 @@ The launcher initializes the data directory with `initdb` on first start, create
 
 ## Release Assets
 
-Protected pushes to `main` create a timestamped `yyyy.m.d-<shortsha>` GitHub release with:
+An explicit `publish=true` workflow dispatch on `develop`, after all three platform lifecycle jobs pass, creates a development prerelease named `yyyy.m.d-<shortsha>` with:
 
 - `lasso-postgres-15.17-win32.zip`
 - `lasso-postgres-15.17-darwin.tar.gz`
 - `lasso-postgres-15.17-linux.tar.gz`
 - `service.json`
 - `SHA256SUMS.txt`
+- `source.json` binding the exact source SHA and publication run
 
 Windows and macOS artifacts are packaged from EnterpriseDB installer binary archives. Linux artifacts are built in CI from the official PostgreSQL source archive for the pinned version, then verified with the same start/connect/stop smoke test before release.
 
@@ -35,7 +37,7 @@ Windows and macOS artifacts are packaged from EnterpriseDB installer binary arch
 npm test
 ```
 
-This packages the current platform artifact, validates the canonical endpoint manifest, extracts it, runs the launcher, waits for TCP readiness, verifies `psql` can connect, and stops the managed process.
+This packages the current platform artifact, validates the canonical endpoint manifest, extracts it and materializes the actual install files. It verifies foreground child ownership, cold/warm SQL persistence, listener closure, failure/recovery, retained-data refusal and configured connection limits. Set `POSTGRES_PACKAGE_ARCHIVE` to test a held archive without rebuilding. Windows archive shutdown uses parent IPC; actual native Core Stop/Start is a separate consumer gate.
 
 ## Environment Contract
 
