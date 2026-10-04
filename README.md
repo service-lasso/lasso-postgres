@@ -10,4 +10,18 @@ The walkthrough installs a pinned release, finds the allocated connection port, 
 
 Public bootstrap credentials are for local evaluation. Use a proper secret policy for a distributed app. See the walkthrough's pinned-release data-directory note before first initialization.
 
+The corrected development package uses the managed `@node` provider and keeps
+PostgreSQL as its foreground child. Install files stay outside the cluster;
+first boot initializes an empty cluster, and later starts retain it. Requested
+databases are provisioned idempotently after server readiness. No tutorial
+launcher adapter is required for this package.
+
+`npm test` builds/extracts the archive, materializes the actual manifest install
+files, asserts child ownership, writes SQL, stops the launcher and checks the
+listener closes, then restarts and reads the original row. On Windows that archive
+test uses parent IPC for graceful shutdown; actual native Core lifecycle is a
+separate consumer gate. Set `POSTGRES_PACKAGE_ARCHIVE` to verify a held archive
+without rebuilding it. Development publication is an explicit `publish=true`
+dispatch on `develop`, after all three platform checks pass.
+
 [Service contract, packaging, and maintainer commands](docs/maintainer-reference.md)

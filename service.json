@@ -65,48 +65,61 @@
       "win32": {
         "assetName": "lasso-postgres-15.17-win32.zip",
         "archiveType": "zip",
-        "command": "node",
-        "args": ["./lasso-postgres.mjs"]
+        "command": "./lasso-postgres.mjs",
+        "args": [],
+        "checksum": {
+          "algorithm": "sha256",
+          "assetName": "SHA256SUMS.txt"
+        }
       },
       "darwin": {
         "assetName": "lasso-postgres-15.17-darwin.tar.gz",
         "archiveType": "tar.gz",
-        "command": "node",
-        "args": ["./lasso-postgres.mjs"]
+        "command": "./lasso-postgres.mjs",
+        "args": [],
+        "checksum": {
+          "algorithm": "sha256",
+          "assetName": "SHA256SUMS.txt"
+        }
       },
       "linux": {
         "assetName": "lasso-postgres-15.17-linux.tar.gz",
         "archiveType": "tar.gz",
-        "command": "node",
-        "args": ["./lasso-postgres.mjs"]
+        "command": "./lasso-postgres.mjs",
+        "args": [],
+        "checksum": {
+          "algorithm": "sha256",
+          "assetName": "SHA256SUMS.txt"
+        }
       }
     }
   },
   "install": {
     "files": [
       {
-        "path": "./runtime/data/.keep",
-        "content": ""
-      },
-      {
         "path": "./runtime/.keep",
         "content": ""
       }
     ]
   },
-  "healthchecks": [
-    {
-      "id": "tcp-ready",
-      "type": "tcp",
-      "address": "${endpoint.service.bind}:${endpoint.service.port}",
-      "retries": 80,
-      "interval": 250
-    }
-  ],
   "updates": {
     "enabled": true,
     "mode": "notify",
     "track": "latest",
     "checkIntervalSeconds": 86400
+  },
+  "depend_on": [
+    "@node"
+  ],
+  "execservice": "@node",
+  "args": [
+    "${SERVICE_ARTIFACT_ROOT}/lasso-postgres.mjs"
+  ],
+  "healthcheck": {
+    "id": "tcp-ready",
+    "type": "tcp",
+    "address": "${endpoint.service.bind}:${endpoint.service.port}",
+    "retries": 80,
+    "interval": 250
   }
 }
