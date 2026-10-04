@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmod, cp, lstat, mkdir, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readdir, readlink, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
