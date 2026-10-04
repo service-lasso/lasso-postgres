@@ -2,13 +2,20 @@ name: Release
 
 on:
   pull_request:
+    branches: [develop]
   push:
     branches:
-      - main
+      - develop
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified development candidate
+        type: boolean
+        default: false
+        required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -49,10 +56,16 @@ jobs:
           sudo apt-get install -y build-essential libreadline-dev zlib1g-dev
 
       - name: Verify package
+        if: matrix.platform != 'win32'
         run: npm test
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
           POSTGRES_VERSION: ${{ matrix.postgres-version }}
+
+      - name: Verify Windows package as an ordinary user
+        if: matrix.platform == 'win32'
+        shell: powershell
+        run: ./scripts/verify-windows-ci.ps1
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4
@@ -70,7 +83,10 @@ jobs:
 
   release:
     needs: build
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'workflow_dispatch' && inputs.publish
+    environment: development-service
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:
@@ -84,11 +100,30 @@ jobs:
           pattern: lasso-postgres-*
           merge-multiple: true
 
+      - name: Compute release version
+        id: version
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          version="$(date -u +%Y.%-m.%-d)-${short_sha}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Copy service manifest into release assets
+        env:
+          LASSO_RELEASE_VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          cp service.json release-assets/service.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const version = process.env.LASSO_RELEASE_VERSION;
+          const manifest = JSON.parse(fs.readFileSync('service.json', 'utf8'));
+          manifest.version = version;
+          manifest.artifact.source.tag = version;
+          delete manifest.artifact.source.channel;
+          fs.writeFileSync('release-assets/service.json', JSON.stringify(manifest, null, 2) + '\n');
+          fs.writeFileSync('release-assets/source.json', JSON.stringify({repo: process.env.GITHUB_REPOSITORY, sourceSha: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, tag: version}, null, 2) + '\n');
+          NODE
 
       - name: Generate release checksums
         shell: bash
@@ -100,15 +135,8 @@ jobs:
             lasso-postgres-15.17-darwin.tar.gz \
             lasso-postgres-15.17-linux.tar.gz \
             service.json \
+            source.json \
             > SHA256SUMS.txt
-
-      - name: Compute release version
-        id: version
-        shell: bash
-        run: |
-          short_sha="${GITHUB_SHA::7}"
-          version="$(date -u +%Y.%-m.%-d)-${short_sha}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -122,4 +150,6 @@ jobs:
             release-assets/lasso-postgres-15.17-linux.tar.gz
             release-assets/service.json
             release-assets/SHA256SUMS.txt
+            release-assets/source.json
+          prerelease: true
           generate_release_notes: true

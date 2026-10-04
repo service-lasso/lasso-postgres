@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile, mkdtemp, readdir } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,8 +128,10 @@ async function stopChild(child) {
   ]);
 }
 
-const artifact = await packagePostgres(platform, postgresVersion);
-const verifyRoot = path.join(repoRoot, "output", "verify", postgresVersion, platform);
+const artifact = process.env.POSTGRES_PACKAGE_ARCHIVE ?? await packagePostgres(platform, postgresVersion);
+const verifyBase = path.join(repoRoot, "output", "verify", postgresVersion, platform);
+await mkdir(verifyBase, { recursive: true });
+const verifyRoot = await mkdtemp(path.join(verifyBase, "attempt-"));
 const serviceRoot = path.join(verifyRoot, "service");
 const extractRoot = path.join(serviceRoot, ".state", "extracted", "current");
 const serviceManifest = JSON.parse(await readFile(path.join(repoRoot, "service.json"), "utf8"));
@@ -141,8 +143,8 @@ if (serviceManifest.id !== "postgres" || serviceManifest.version !== postgresVer
   throw new Error(`Unexpected service manifest identity: ${JSON.stringify({ id: serviceManifest.id, version: serviceManifest.version })}`);
 }
 
-if (serviceManifest.healthcheck) {
-  throw new Error("PostgreSQL service.json must use canonical healthchecks[] instead of singular healthcheck.");
+if (serviceManifest.healthchecks) {
+  throw new Error("Use the supported single readiness check to round-trip Core import (#1669).");
 }
 
 if (serviceManifest.ports) {
@@ -190,9 +192,8 @@ if (postgresEndpoint.exposure !== "local" || postgresEndpoint.primary !== true) 
   throw new Error("PostgreSQL URL endpoint must remain the primary local URL.");
 }
 
-const [tcpHealthcheck] = serviceManifest.healthchecks ?? [];
+const tcpHealthcheck = serviceManifest.healthcheck;
 if (
-  serviceManifest.healthchecks?.length !== 1 ||
   tcpHealthcheck?.id !== "tcp-ready" ||
   tcpHealthcheck?.type !== "tcp" ||
   tcpHealthcheck?.address !== "${endpoint.service.bind}:${endpoint.service.port}"
@@ -216,7 +217,6 @@ for (const key of ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_URL", "POSTGRES_U
   }
 }
 
-await rm(verifyRoot, { recursive: true, force: true });
 await mkdir(extractRoot, { recursive: true });
 run("tar", ["-xf", artifact, "-C", extractRoot]);
 
@@ -244,52 +244,124 @@ if (
   throw new Error(`Unexpected package metadata: ${JSON.stringify(packageMetadata)}`);
 }
 
-const postgres = spawn(process.execPath, ["./lasso-postgres.mjs"], {
-  cwd: extractRoot,
-  env: {
-    ...process.env,
-    SERVICE_ROOT: serviceRoot,
-    SERVICE_PORT: String(tcpPort),
-    POSTGRES_HOST: "127.0.0.1",
-    POSTGRES_PORT: String(tcpPort),
-    POSTGRES_USER: "pgadmin",
-    POSTGRES_PASSWORD: "pgadmin",
-    POSTGRES_DATABASES: "keycloak",
-    POSTGRES_DATA_DIR: dataRoot,
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true,
-});
-
-let stdout = "";
-let stderr = "";
-postgres.stdout?.on("data", (chunk) => {
-  stdout += chunk.toString();
-});
-postgres.stderr?.on("data", (chunk) => {
-  stderr += chunk.toString();
-});
-
+// Exercise the actual files materialized by Service Lasso installation.
+for (const file of serviceManifest.install?.files ?? []) {
+  const target = path.resolve(serviceRoot, file.path);
+  if (!target.startsWith(serviceRoot + path.sep)) throw new Error('Install file escapes owned service root.');
+  if (target.startsWith(dataRoot + path.sep)) throw new Error('Install files must not pollute the cluster.');
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, file.content ?? '');
+}
+const psql = path.join(extractRoot, 'bin', platform === 'win32' ? 'psql.exe' : 'psql');
+const childEnv = { ...process.env, SERVICE_ROOT: serviceRoot, SERVICE_PORT: String(tcpPort), POSTGRES_HOST: '127.0.0.1', POSTGRES_PORT: String(tcpPort), POSTGRES_USER: 'pgadmin', POSTGRES_PASSWORD: 'pgadmin', POSTGRES_DATABASES: 'keycloak', POSTGRES_DATA_DIR: dataRoot, PGPASSWORD: 'pgadmin', PATH: path.dirname(psql) + path.delimiter + (process.env.PATH ?? '') };
+if (platform === 'linux') childEnv.LD_LIBRARY_PATH = path.join(extractRoot, 'lib');
+let child;
+let output = '';
+function launch() {
+  child = spawn(process.execPath, ['./lasso-postgres.mjs'], { cwd: extractRoot, env: childEnv, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true });
+  child.stdout.on('data', x => { output += x; });
+  child.stderr.on('data', x => { output += x; });
+  return child;
+}
+function sql(query) {
+  const result = spawnSync(psql, ['-h', '127.0.0.1', '-p', String(tcpPort), '-U', 'pgadmin', '-d', 'keycloak', '-At', '-c', query], { env: childEnv, encoding: 'utf8', timeout: 5000, windowsHide: true });
+  if (result.status !== 0) throw new Error('SQL failed: ' + result.stderr);
+  return result.stdout.trim();
+}
+async function parentPid(pid) {
+  if (platform === 'win32') {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', '(Get-CimInstance Win32_Process -Filter "ProcessId=' + pid + '").ParentProcessId'], { encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) throw new Error('Cannot observe server parent identity.');
+    return Number(result.stdout.trim());
+  }
+  const result = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error('Cannot observe server parent identity.');
+  return Number(result.stdout.trim());
+}
+async function verifyOwned(clusterRoot = dataRoot) {
+  const pid = Number((await readFile(path.join(clusterRoot, 'postmaster.pid'), 'utf8')).split('\n')[0]);
+  if (await parentPid(pid) !== child.pid) throw new Error('PostgreSQL is not the managed launcher child.');
+  return { launcherPid: child.pid, postgresPid: pid };
+}
+async function wrapperStop() {
+  const stopped = new Promise(resolve => child.once('close', resolve));
+  if (platform === 'win32') child.send('shutdown');
+  else child.kill('SIGTERM');
+  let timer;
+  try {
+    await Promise.race([stopped, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Launcher shutdown timed out.')), 30000); })]);
+  } finally { clearTimeout(timer); }
+  if (child.exitCode !== 0) throw new Error('Launcher shutdown failed: ' + child.exitCode);
+  try { await waitForTcp(tcpPort, 500); } catch { return; }
+  throw new Error('Listener remains after wrapper stopped.');
+}
+const cycles = [];
 try {
+  launch();
   await waitForTcp(tcpPort);
-  const psql = path.join(extractRoot, "bin", platform === "win32" ? "psql.exe" : "psql");
   await waitForPsql(psql, tcpPort);
-  console.log("[lasso-postgres] verification passed");
+  cycles.push(await verifyOwned());
+  sql("create table lifecycle_receipt (id text primary key); insert into lifecycle_receipt values ('original-identity');");
+  await wrapperStop();
+  launch();
+  await waitForPsql(psql, tcpPort);
+  cycles.push(await verifyOwned());
+  if (sql('select id from lifecycle_receipt') !== 'original-identity') throw new Error('Original data was not retained.');
+  await wrapperStop();
+  launch();
+  await waitForPsql(psql, tcpPort);
+  const failedCycle = await verifyOwned();
+  const failed = new Promise(resolve => child.once('close', resolve));
+  // Inject failure only into the freshly observed owned foreground child.
+  if (await parentPid(failedCycle.postgresPid) !== child.pid) throw new Error('Failure injection ownership changed.');
+  process.kill(failedCycle.postgresPid, 'SIGKILL');
+  let failureTimer;
+  try {
+    await Promise.race([failed, new Promise((_, reject) => { failureTimer = setTimeout(() => reject(new Error('Launcher did not propagate child failure.')), 10000); })]);
+  } finally { clearTimeout(failureTimer); }
+  if (child.exitCode === 0) throw new Error('Abnormal child exit was reported as successful.');
+  childEnv.POSTGRES_MAX_CONNECTIONS = '120';
+  launch();
+  await waitForPsql(psql, tcpPort);
+  cycles.push(await verifyOwned());
+  if (sql('select id from lifecycle_receipt') !== 'original-identity') throw new Error('Data was lost after child failure.');
+  if (sql('show max_connections') !== '120') throw new Error('Configured max_connections was not applied.');
+  await wrapperStop();
+  const legacyRoot = path.join(serviceRoot, 'legacy-data');
+  await mkdir(legacyRoot);
+  await writeFile(path.join(legacyRoot, '.keep'), '');
+  childEnv.POSTGRES_DATA_DIR = legacyRoot;
+  launch();
+  await waitForPsql(psql, tcpPort);
+  const legacyCycle = await verifyOwned(legacyRoot);
+  await wrapperStop();
+  const retainedPlaceholder = (await readdir(path.join(serviceRoot, 'runtime'))).find(x => x.startsWith('legacy-data-placeholder-'));
+  if (!retainedPlaceholder || await readFile(path.join(serviceRoot, 'runtime', retainedPlaceholder), 'utf8') !== '') throw new Error('Legacy placeholder was not retained.');
+  const invalidRoot = path.join(serviceRoot, 'retained-nonempty-data');
+  await mkdir(invalidRoot);
+  await writeFile(path.join(invalidRoot, '.keep'), '');
+  await writeFile(path.join(invalidRoot, 'operator.txt'), 'retained-user-state');
+  childEnv.POSTGRES_DATA_DIR = invalidRoot;
+  launch();
+  const rejected = new Promise(resolve => child.once('close', resolve));
+  let rejectionTimer;
+  try {
+    await Promise.race([rejected, new Promise((_, reject) => { rejectionTimer = setTimeout(() => reject(new Error('Unexpected retained cluster was not rejected.')), 10000); })]);
+  } finally { clearTimeout(rejectionTimer); }
+  if (child.exitCode === 0 || await readFile(path.join(invalidRoot, 'operator.txt'), 'utf8') !== 'retained-user-state') throw new Error('Nonempty operator state was not preserved and rejected.');
+  if (!(await readdir(invalidRoot)).includes('.keep')) throw new Error('Unexpected contents were altered.');
+  if ((await readdir(path.join(serviceRoot, 'runtime'))).some(x => x.endsWith('.password'))) throw new Error('Initialization password was retained.');
+  childEnv.POSTGRES_DATA_DIR = dataRoot;
+  await writeFile(path.join(verifyRoot, 'lifecycle-verification.json'), JSON.stringify({ platform, artifact, installFilesMaterialized: true, cycles, failedCycle, legacyCycle, retainedPlaceholder, nonemptyOperatorStatePreserved: true, childFailurePropagated: true, originalDataRetained: true, listenerClosedAfterEachWrapperStop: true, windowsStopBoundary: platform === 'win32' ? 'parent IPC; native Core lifecycle verified separately' : 'SIGTERM' }, null, 2));
+  console.log('[lasso-postgres] cold/warm SQL and owned foreground lifecycle PASS');
 } catch (error) {
-  console.error("[lasso-postgres] stdout:");
-  console.error(stdout);
-  console.error("[lasso-postgres] stderr:");
-  console.error(stderr);
+  console.error(output);
   throw error;
 } finally {
-  const pgctl = path.join(extractRoot, "bin", platform === "win32" ? "pg_ctl.exe" : "pg_ctl");
-  spawnSync(pgctl, ["-D", dataRoot, "-m", "fast", "-w", "stop"], {
-    env: {
-      ...process.env,
-      PATH: `${path.dirname(pgctl)}${path.delimiter}${process.env.PATH ?? ""}`,
-    },
-    stdio: "ignore",
-    shell: false,
-  });
-  await stopChild(postgres);
+  // Cleanup only the owned cluster after a failed gate; never count this as proof.
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const pgctl = path.join(extractRoot, 'bin', platform === 'win32' ? 'pg_ctl.exe' : 'pg_ctl');
+    spawnSync(pgctl, ['-D', childEnv.POSTGRES_DATA_DIR, '-m', 'fast', '-w', 'stop'], { env: childEnv, stdio: 'ignore', windowsHide: true });
+    await stopChild(child);
+  }
 }

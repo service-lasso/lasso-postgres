@@ -2,4 +2,5 @@
 dist/
 output/
 vendor/
+.tmp/
 verify/service-harness.ci.json
