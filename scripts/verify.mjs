@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile, mkdtemp } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,7 +129,9 @@ async function stopChild(child) {
 }
 
 const artifact = process.env.POSTGRES_PACKAGE_ARCHIVE ?? await packagePostgres(platform, postgresVersion);
-const verifyRoot = path.join(repoRoot, "output", "verify", postgresVersion, platform);
+const verifyBase = path.join(repoRoot, "output", "verify", postgresVersion, platform);
+await mkdir(verifyBase, { recursive: true });
+const verifyRoot = await mkdtemp(path.join(verifyBase, "attempt-"));
 const serviceRoot = path.join(verifyRoot, "service");
 const extractRoot = path.join(serviceRoot, ".state", "extracted", "current");
 const serviceManifest = JSON.parse(await readFile(path.join(repoRoot, "service.json"), "utf8"));
@@ -215,7 +217,6 @@ for (const key of ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_URL", "POSTGRES_U
   }
 }
 
-await rm(verifyRoot, { recursive: true, force: true });
 await mkdir(extractRoot, { recursive: true });
 run("tar", ["-xf", artifact, "-C", extractRoot]);
 
@@ -306,7 +307,24 @@ try {
   cycles.push(await verifyOwned());
   if (sql('select id from lifecycle_receipt') !== 'original-identity') throw new Error('Original data was not retained.');
   await wrapperStop();
-  await writeFile(path.join(verifyRoot, 'lifecycle-verification.json'), JSON.stringify({ platform, artifact, installFilesMaterialized: true, cycles, originalDataRetained: true, listenerClosedAfterEachWrapperStop: true, windowsStopBoundary: platform === 'win32' ? 'parent IPC; native Core lifecycle verified separately' : 'SIGTERM' }, null, 2));
+  launch();
+  await waitForPsql(psql, tcpPort);
+  const failedCycle = await verifyOwned();
+  const failed = new Promise(resolve => child.once('close', resolve));
+  // Inject failure only into the freshly observed owned foreground child.
+  if (await parentPid(failedCycle.postgresPid) !== child.pid) throw new Error('Failure injection ownership changed.');
+  process.kill(failedCycle.postgresPid, 'SIGKILL');
+  let failureTimer;
+  try {
+    await Promise.race([failed, new Promise((_, reject) => { failureTimer = setTimeout(() => reject(new Error('Launcher did not propagate child failure.')), 10000); })]);
+  } finally { clearTimeout(failureTimer); }
+  if (child.exitCode === 0) throw new Error('Abnormal child exit was reported as successful.');
+  launch();
+  await waitForPsql(psql, tcpPort);
+  cycles.push(await verifyOwned());
+  if (sql('select id from lifecycle_receipt') !== 'original-identity') throw new Error('Data was lost after child failure.');
+  await wrapperStop();
+  await writeFile(path.join(verifyRoot, 'lifecycle-verification.json'), JSON.stringify({ platform, artifact, installFilesMaterialized: true, cycles, failedCycle, childFailurePropagated: true, originalDataRetained: true, listenerClosedAfterEachWrapperStop: true, windowsStopBoundary: platform === 'win32' ? 'parent IPC; native Core lifecycle verified separately' : 'SIGTERM' }, null, 2));
   console.log('[lasso-postgres] cold/warm SQL and owned foreground lifecycle PASS');
 } catch (error) {
   console.error(output);
