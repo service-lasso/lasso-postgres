@@ -15,6 +15,9 @@ PostgreSQL as its foreground child. Install files stay outside the cluster;
 first boot initializes an empty cluster, and later starts retain it. Requested
 databases are provisioned idempotently after server readiness. No tutorial
 launcher adapter is required for this package.
+An older failed install containing only its empty `.keep` placeholder is
+recovered by retaining that file outside the cluster. Other existing contents
+are preserved and initialization fails with diagnostic logs.
 
 `npm test` builds/extracts the archive, materializes the actual manifest install
 files, asserts child ownership, writes SQL, stops the launcher and checks the

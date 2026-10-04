@@ -277,8 +277,8 @@ async function parentPid(pid) {
   if (result.status !== 0) throw new Error('Cannot observe server parent identity.');
   return Number(result.stdout.trim());
 }
-async function verifyOwned() {
-  const pid = Number((await readFile(path.join(dataRoot, 'postmaster.pid'), 'utf8')).split('\n')[0]);
+async function verifyOwned(clusterRoot = dataRoot) {
+  const pid = Number((await readFile(path.join(clusterRoot, 'postmaster.pid'), 'utf8')).split('\n')[0]);
   if (await parentPid(pid) !== child.pid) throw new Error('PostgreSQL is not the managed launcher child.');
   return { launcherPid: child.pid, postgresPid: pid };
 }
@@ -324,6 +324,15 @@ try {
   cycles.push(await verifyOwned());
   if (sql('select id from lifecycle_receipt') !== 'original-identity') throw new Error('Data was lost after child failure.');
   await wrapperStop();
+  const legacyRoot = path.join(serviceRoot, 'legacy-data');
+  await mkdir(legacyRoot);
+  await writeFile(path.join(legacyRoot, '.keep'), '');
+  childEnv.POSTGRES_DATA_DIR = legacyRoot;
+  launch();
+  await waitForPsql(psql, tcpPort);
+  const legacyCycle = await verifyOwned(legacyRoot);
+  await wrapperStop();
+  childEnv.POSTGRES_DATA_DIR = dataRoot;
   await writeFile(path.join(verifyRoot, 'lifecycle-verification.json'), JSON.stringify({ platform, artifact, installFilesMaterialized: true, cycles, failedCycle, childFailurePropagated: true, originalDataRetained: true, listenerClosedAfterEachWrapperStop: true, windowsStopBoundary: platform === 'win32' ? 'parent IPC; native Core lifecycle verified separately' : 'SIGTERM' }, null, 2));
   console.log('[lasso-postgres] cold/warm SQL and owned foreground lifecycle PASS');
 } catch (error) {

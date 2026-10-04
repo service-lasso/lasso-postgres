@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync, readdirSync, lstatSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,6 +49,21 @@ try {
   if (!existsSync(path.join(dataRoot, 'PG_VERSION'))) {
     mkdirSync(runtimeRoot, { recursive: true });
     mkdirSync(path.dirname(dataRoot), { recursive: true });
+    // Recover only the exact empty placeholder created by the old installer.
+    // Preserve it outside the cluster; never clear other retained contents.
+    if (existsSync(dataRoot) && !lstatSync(dataRoot).isSymbolicLink()) {
+      const entries = readdirSync(dataRoot);
+      const placeholder = path.join(dataRoot, '.keep');
+      if (entries.length === 1 && entries[0] === '.keep') {
+        const stat = lstatSync(placeholder);
+        if (stat.isFile() && !stat.isSymbolicLink() && stat.size === 0) {
+          const retained = path.join(runtimeRoot, 'legacy-data-placeholder-' + process.pid + '-' + Date.now() + '.keep');
+          if (existsSync(retained)) throw new Error('Legacy placeholder receipt already exists.');
+          renameSync(placeholder, retained);
+          console.log('[lasso-postgres] retained legacy empty install placeholder outside the cluster');
+        }
+      }
+    }
     const passwordFile = path.join(runtimeRoot, 'postgres-init-' + process.pid + '.password');
     writeFileSync(passwordFile, password + '\n', { mode: 0o600, flag: 'wx' });
     try {
