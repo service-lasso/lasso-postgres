@@ -2,13 +2,13 @@
 
 Give your app a local PostgreSQL database that Lasso installs, starts, checks, and stops for you.
 
-**[Add PostgreSQL and connect a working app](https://github.com/service-lasso/service-lasso/blob/develop/docs/first-useful-service.md)**
+**[Add PostgreSQL and connect a working app](https://service-lasso.github.io/service-lasso/getting-started/intermediate-make-todo-app-durable)**
 
 The walkthrough installs a pinned release, finds the allocated connection port, and proves a real database write/read. It includes configuration, failure diagnosis, and shutdown without deleting your data.
 
-[Configure and recover](https://github.com/service-lasso/service-lasso/blob/develop/docs/operate-your-service.md) · [Package your app](https://github.com/service-lasso/service-lasso/blob/develop/docs/package-your-app.md) · [Releases](https://github.com/service-lasso/lasso-postgres/releases)
+[Configure and recover](https://service-lasso.github.io/service-lasso/getting-started/intermediate-make-todo-app-durable) · [Package your app](https://service-lasso.github.io/service-lasso/service-authoring/04-wire-consumers) · [Releases](https://github.com/service-lasso/lasso-postgres/releases)
 
-Public bootstrap credentials are for local evaluation. Use a proper secret policy for a distributed app. See the walkthrough's pinned-release data-directory note before first initialization.
+Public bootstrap credentials are for local evaluation. Use a proper secret policy for a distributed app. See the walkthrough's retained-data upgrade instructions when replacing an older package.
 
 The corrected development package uses the managed `@node` provider and keeps
 PostgreSQL as its foreground child. Install files stay outside the cluster;
