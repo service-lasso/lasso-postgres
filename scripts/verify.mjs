@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, symlink, writeFile, mkdtemp } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile, mkdtemp, readdir } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -248,6 +248,7 @@ if (
 for (const file of serviceManifest.install?.files ?? []) {
   const target = path.resolve(serviceRoot, file.path);
   if (!target.startsWith(serviceRoot + path.sep)) throw new Error('Install file escapes owned service root.');
+  if (target.startsWith(dataRoot + path.sep)) throw new Error('Install files must not pollute the cluster.');
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, file.content ?? '');
 }
@@ -332,8 +333,24 @@ try {
   await waitForPsql(psql, tcpPort);
   const legacyCycle = await verifyOwned(legacyRoot);
   await wrapperStop();
+  const retainedPlaceholder = (await readdir(path.join(serviceRoot, 'runtime'))).find(x => x.startsWith('legacy-data-placeholder-'));
+  if (!retainedPlaceholder || await readFile(path.join(serviceRoot, 'runtime', retainedPlaceholder), 'utf8') !== '') throw new Error('Legacy placeholder was not retained.');
+  const invalidRoot = path.join(serviceRoot, 'retained-nonempty-data');
+  await mkdir(invalidRoot);
+  await writeFile(path.join(invalidRoot, '.keep'), '');
+  await writeFile(path.join(invalidRoot, 'operator.txt'), 'retained-user-state');
+  childEnv.POSTGRES_DATA_DIR = invalidRoot;
+  launch();
+  const rejected = new Promise(resolve => child.once('close', resolve));
+  let rejectionTimer;
+  try {
+    await Promise.race([rejected, new Promise((_, reject) => { rejectionTimer = setTimeout(() => reject(new Error('Unexpected retained cluster was not rejected.')), 10000); })]);
+  } finally { clearTimeout(rejectionTimer); }
+  if (child.exitCode === 0 || await readFile(path.join(invalidRoot, 'operator.txt'), 'utf8') !== 'retained-user-state') throw new Error('Nonempty operator state was not preserved and rejected.');
+  if (!(await readdir(invalidRoot)).includes('.keep')) throw new Error('Unexpected contents were altered.');
+  if ((await readdir(path.join(serviceRoot, 'runtime'))).some(x => x.endsWith('.password'))) throw new Error('Initialization password was retained.');
   childEnv.POSTGRES_DATA_DIR = dataRoot;
-  await writeFile(path.join(verifyRoot, 'lifecycle-verification.json'), JSON.stringify({ platform, artifact, installFilesMaterialized: true, cycles, failedCycle, childFailurePropagated: true, originalDataRetained: true, listenerClosedAfterEachWrapperStop: true, windowsStopBoundary: platform === 'win32' ? 'parent IPC; native Core lifecycle verified separately' : 'SIGTERM' }, null, 2));
+  await writeFile(path.join(verifyRoot, 'lifecycle-verification.json'), JSON.stringify({ platform, artifact, installFilesMaterialized: true, cycles, failedCycle, legacyCycle, retainedPlaceholder, nonemptyOperatorStatePreserved: true, childFailurePropagated: true, originalDataRetained: true, listenerClosedAfterEachWrapperStop: true, windowsStopBoundary: platform === 'win32' ? 'parent IPC; native Core lifecycle verified separately' : 'SIGTERM' }, null, 2));
   console.log('[lasso-postgres] cold/warm SQL and owned foreground lifecycle PASS');
 } catch (error) {
   console.error(output);
@@ -342,7 +359,7 @@ try {
   // Cleanup only the owned cluster after a failed gate; never count this as proof.
   if (child && child.exitCode === null && child.signalCode === null) {
     const pgctl = path.join(extractRoot, 'bin', platform === 'win32' ? 'pg_ctl.exe' : 'pg_ctl');
-    spawnSync(pgctl, ['-D', dataRoot, '-m', 'fast', '-w', 'stop'], { env: childEnv, stdio: 'ignore', windowsHide: true });
+    spawnSync(pgctl, ['-D', childEnv.POSTGRES_DATA_DIR, '-m', 'fast', '-w', 'stop'], { env: childEnv, stdio: 'ignore', windowsHide: true });
     await stopChild(child);
   }
 }
